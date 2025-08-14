@@ -85,10 +85,10 @@ function init(n){
 
   // ★最初の空きは「外へ出したタイルの元いた場所」= 常に1つだけにする
   // ランダムに1枚選んで外枠(x=N-1, y=-1)へ移動し、その元位置を空きに設定
-  const pickIndex = (Math.random()*tiles.length)|0;
-  const prev = { x: tiles[pickIndex].x, y: tiles[pickIndex].y };
-  tiles[pickIndex].x = N-1; tiles[pickIndex].y = -1; // 外へ
-  emptyPos = prev; // 盤内の空きは1つだけ
+  const pickIndex = tiles.findIndex(t => t.id === N-1); // ★正方形の一番右上のピース（id=N-1）を外枠へ
+const prev = { x: tiles[pickIndex].x, y: tiles[pickIndex].y };
+tiles[pickIndex].x = N-1; tiles[pickIndex].y = -1; // 右上の外へ
+emptyPos = prev; // 元いた右上セルを空きに（スタート時に必ずクリア可能系） // 盤内の空きは1つだけ
 
   render();
   // 合法手シャッフル
