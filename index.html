@@ -2,54 +2,32 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>スライドパズル（画像アップロード）</title>
+
+<title>スライドパズル（画像アップロード／外枠つき）</title>
 <style>
-body {
-    font-family: sans-serif;
-    text-align: center;
-    background-color: #f5f5f5;
-}
-h1 {
-    font-size: 28px;
-    margin: 20px 0 10px;
-}
-.controls {
-    margin-bottom: 15px;
-}
-button, input[type="file"] {
-    margin: 0 3px;
-    padding: 5px 10px;
-    font-size: 14px;
-}
-#puzzle {
-    position: relative;
-    margin: 0 auto;
-}
-.tile {
-    position: absolute;
-    border: 1px solid #ccc;
-    box-sizing: border-box;
-    background-size: cover;
-    background-position: center;
-    transition: all 0.2s ease;
-}
-.tile.empty {
-    background: none;
-    border: none;
-}
+  body{font-family:sans-serif;text-align:center;background:#f5f5f5;margin:0;padding:20px}
+  h1{font-size:28px;margin:20px 0 10px}
+  .controls{margin-bottom:15px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;align-items:center}
+  button,input[type="file"]{margin:0 3px;padding:6px 10px;font-size:14px}
+  #puzzle{position:relative;margin:0 auto}
+  .tile{
+    position:absolute;border:1px solid #ccc;box-sizing:border-box;
+    background-size:cover;background-position:center;transition:left .2s, top .2s;cursor:pointer;
+    width:100px;height:100px; /* JSで上書き */
+  }
 </style>
 </head>
 <body>
 <h1>スライドパズル</h1>
 
 <div class="controls">
-    サイズ:
-    <button onclick="init(3)">3×3</button>
-    <button onclick="init(4)">4×4</button>
-    <button onclick="init(5)">5×5</button>
-    <br><br>
-    画像アップロード:
-    <input type="file" accept="image/*" onchange="handleImageUpload(event)">
+  サイズ:
+  <button onclick="init(3)">3×3</button>
+  <button onclick="init(4)">4×4</button>
+  <button onclick="init(5)">5×5</button>
+  画像アップロード:
+  <input id="fileInput" type="file" accept="image/*">
+  <button onclick="shuffle()">シャッフル</button>
 </div>
 
 <div id="puzzle"></div>
@@ -58,118 +36,137 @@ button, input[type="file"] {
 let N = 3;
 let tileSize = 100;
 let tileGap = 2;
-let tiles = [];
-let emptyTile;
-let currentImage = null; // アップロード画像のURLを保持
 
-function init(n) {
-    if (!currentImage) {
-        alert("先に画像をアップロードしてください。");
-        return;
+let tiles = [];        // タイルは常に N*N 枚：{id, x, y, el}  id:0..N*N-1
+let emptyPos = {x:0,y:0}; // 空きは“座標”で管理（オブジェクトは作らない）
+let imgURL = null;     // アップロード画像のObjectURL
+
+const puzzle = document.getElementById('puzzle');
+const fileInput = document.getElementById('fileInput');
+
+/* 画像アップロード */
+fileInput.addEventListener('change', e=>{
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  if(imgURL) URL.revokeObjectURL(imgURL);
+  imgURL = URL.createObjectURL(f);
+  // 画像が入ったら現在サイズで作り直し
+  init(N);
+});
+
+/* 初期化：タイル生成は N×N 枚のみ。外枠は“位置”で表現（y=-1, x=N-1） */
+function init(n){
+  if(!imgURL){ alert('先に画像をアップロードしてください。'); return; }
+
+  N = n;
+  tiles = [];
+  puzzle.innerHTML = '';
+
+  // 盤サイズを計算・反映
+  tileSize = 400 / N - tileGap;
+  const w = N * (tileSize + tileGap);
+  const h = (N + 1) * (tileSize + tileGap); // 上に外枠1段ぶん
+  puzzle.style.width = w + 'px';
+  puzzle.style.height = h + 'px';
+
+  // N×N タイルを作成（id が完成時の位置を表す）
+  for(let y=0;y<N;y++){
+    for(let x=0;x<N;x++){
+      const id = y*N + x;
+      const el = document.createElement('div');
+      el.className = 'tile';
+      el.style.width = tileSize + 'px';
+      el.style.height = tileSize + 'px';
+      el.addEventListener('click', ()=> onTileClick(id));
+      puzzle.appendChild(el);
+      tiles.push({id, x, y, el});
     }
+  }
 
-    N = n;
-    const puzzle = document.getElementById("puzzle");
-    puzzle.innerHTML = "";
-    tiles = [];
+  // ★最初の空きは「外へ出したタイルの元いた場所」= 常に1つだけにする
+  // ランダムに1枚選んで外枠(x=N-1, y=-1)へ移動し、その元位置を空きに設定
+  const pickIndex = (Math.random()*tiles.length)|0;
+  const prev = { x: tiles[pickIndex].x, y: tiles[pickIndex].y };
+  tiles[pickIndex].x = N-1; tiles[pickIndex].y = -1; // 外へ
+  emptyPos = prev; // 盤内の空きは1つだけ
 
-    tileSize = 400 / N - tileGap; // 全体サイズ調整
+  render();
+  // 合法手シャッフル
+  shuffle();
+}
 
-    // タイル生成
-    let id = 0;
-    for (let y = 0; y < N; y++) {
-        for (let x = 0; x < N; x++) {
-            const tile = document.createElement("div");
-            tile.className = "tile";
-            tile.style.width = tileSize + "px";
-            tile.style.height = tileSize + "px";
-            puzzle.appendChild(tile);
-            tiles.push({id: id, x: x, y: y, el: tile});
-            id++;
-        }
-    }
+/* クリック処理：空きと隣接なら入替える。外枠⇄右上セルも隣接扱い */
+function onTileClick(id){
+  const t = tiles.find(tt=>tt.id===id);
+  if(!t || !imgURL) return;
 
-    // 右上外マス（N×Nの右上の外側）
-    const outsideTile = document.createElement("div");
-    outsideTile.className = "tile";
-    outsideTile.style.width = tileSize + "px";
-    outsideTile.style.height = tileSize + "px";
-    puzzle.appendChild(outsideTile);
-    tiles.push({id: id, x: N - 1, y: -1, el: outsideTile});
-    id++;
-
-    // 空きマスをランダム配置（内部の1つ）
-    let emptyPos = Math.floor(Math.random() * N * N);
-    emptyTile = tiles[emptyPos];
-    emptyTile.id = -1;
-
-    // パズル全体サイズ
-    puzzle.style.width = N * (tileSize + tileGap) + "px";
-    puzzle.style.height = (N + 1) * (tileSize + tileGap) + "px";
-
+  if(isNeighbor(t.x,t.y, emptyPos.x,emptyPos.y)){
+    // swap 座標
+    const ox=t.x, oy=t.y;
+    t.x = emptyPos.x; t.y = emptyPos.y;
+    emptyPos = {x:ox, y:oy};
     render();
-
-    tiles.forEach(t => {
-        t.el.onclick = () => {
-            moveTile(t);
-        };
-    });
+    if(isSolved()) alert('完成！🎉');
+  }
 }
 
-function handleImageUpload(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        currentImage = e.target.result;
-        init(N); // 現在のサイズで再初期化
-    };
-    reader.readAsDataURL(file);
+/* 隣接判定：上下左右。特殊ケース：外枠(N-1,-1) と 右上(N-1,0) は隣接 */
+function isNeighbor(ax,ay, bx,by){
+  if(ax===N-1 && ay===-1 && bx===N-1 && by===0) return true;
+  if(bx===N-1 && by===-1 && ax===N-1 && ay===0) return true;
+  return (Math.abs(ax-bx)+Math.abs(ay-by)===1);
 }
 
-function render() {
-    tiles.forEach(t => {
-        const px = t.x * (tileSize + tileGap);
-        const py = (t.y >= 0 ? (t.y + 1) * (tileSize + tileGap) : 0);
-        t.el.style.left = px + "px";
-        t.el.style.top = py + "px";
+/* レンダリング：背景スプライトは id を基準に切り出す（重複しない） */
+function render(){
+  const bgW = N*tileSize + tileGap*(N-1);
+  const bgH = N*tileSize + tileGap*(N-1);
 
-        if (t.id >= 0) {
-            t.el.classList.remove("empty");
-            t.el.style.backgroundImage = `url(${currentImage})`;
-            t.el.style.backgroundSize = `${N*100}% ${N*100}%`;
-            t.el.style.backgroundPosition = 
-                `${(t.id % N) * (-100/(N-1))}% ${Math.floor(t.id / N) * (-100/(N-1))}%`;
-        } else {
-            t.el.classList.add("empty");
-            t.el.style.backgroundImage = "";
-        }
-    });
+  for(const t of tiles){
+    // 表示位置（外枠は一段上：y=-1 → top=0）
+    const left = t.x * (tileSize + tileGap);
+    const top  = (t.y>=0 ? (t.y+1)*(tileSize+tileGap) : 0);
+    t.el.style.left = left + 'px';
+    t.el.style.top  = top  + 'px';
+
+    // 背景は id をもとに切り出す（id は 0..N*N-1）
+    const wantX = (t.id % N) * (tileSize + tileGap);
+    const wantY = Math.floor(t.id / N) * (tileSize + tileGap);
+    t.el.style.backgroundImage = `url(${imgURL})`;
+    t.el.style.backgroundSize  = `${bgW}px ${bgH}px`;
+    t.el.style.backgroundPosition = `-${wantX}px -${wantY}px`;
+  }
+
+  // 空きセルにはタイルが存在しない＝見た目で穴になる（余計な“空タイルDOM”は作らない）
 }
 
-function moveTile(tile) {
-    const dx = Math.abs(tile.x - emptyTile.x);
-    const dy = Math.abs(tile.y - emptyTile.y);
-
-    // 内部マス同士
-    if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
-        swap(tile, emptyTile);
-    }
-    // 外マスと右上セル
-    else if (tile.y === -1 && emptyTile.x === N - 1 && emptyTile.y === 0) {
-        swap(tile, emptyTile);
-    }
-    else if (emptyTile.y === -1 && tile.x === N - 1 && tile.y === 0) {
-        swap(tile, emptyTile);
-    }
+/* 合法手だけシャッフル：空きのランダムウォーク＋外枠との入替え混ぜる */
+function shuffle(steps = (N===3?160 : N===4?240 : 320)){
+  for(let i=0;i<steps;i++){
+    // 空きに隣接する“移動可能タイル”を列挙
+    const cand = tiles.filter(t => isNeighbor(t.x,t.y, emptyPos.x, emptyPos.y));
+    if(!cand.length) continue;
+    const pick = cand[(Math.random()*cand.length)|0];
+    // スワップ
+    const ox=pick.x, oy=pick.y;
+    pick.x = emptyPos.x; pick.y = emptyPos.y;
+    emptyPos = {x:ox, y:oy};
+  }
+  render();
+  // たまたま完成していたらもう少し混ぜる
+  if(isSolved()) shuffle(Math.floor(steps/3));
 }
 
-function swap(a, b) {
-    const tempX = a.x, tempY = a.y;
-    a.x = b.x; a.y = b.y;
-    b.x = tempX; b.y = tempY;
-    render();
+/* クリア判定：盤内が id と一致＆空きが外枠(N-1,-1) */
+function isSolved(){
+  // 空きが外枠
+  if(!(emptyPos.x===N-1 && emptyPos.y===-1)) return false;
+  // 盤内タイルが所定の位置
+  for(const t of tiles){
+    const wantX = t.id % N, wantY = Math.floor(t.id / N);
+    if(t.x!==wantX || t.y!==wantY) return false;
+  }
+  return true;
 }
 </script>
 </body>
