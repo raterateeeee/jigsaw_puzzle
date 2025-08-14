@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-<title>ジグソーパズル（精密判定＆グルーピング）</title>
+<title>ジグソーパズル（精密判定＆グルーピング／修正版）</title>
 <style>
   :root {
     --img: url("data:image/svg+xml;utf8,\
@@ -27,7 +27,7 @@
           <circle cx='360' cy='520' r='90' fill='%23ffffff'/>\
         </g>\
         <g font-family='sans-serif' font-size='72' fill='%23555' opacity='0.35'>\
-          <text x='48' y='130'>Jigsaw Precision</text>\
+          <text x='48' y='130'>Jigsaw Precision v2</text>\
         </g>\
       </svg>");
   }
@@ -59,13 +59,14 @@
 </head>
 <body>
   <header>
-    <h1>ジグソーパズル（精密判定＆グルーピング）</h1>
+    <h1>ジグソーパズル（精密判定＆グルーピング／修正版）</h1>
     <div class="controls">
       <label>分割
         <select id="gridSize">
           <option value="3">3×3</option>
           <option value="4" selected>4×4</option>
           <option value="5">5×5</option>
+          <option value="6">6×6</option>
         </select>
       </label>
       <button id="shuffleBtn" class="btn">シャッフル</button>
@@ -93,7 +94,7 @@
 (function(){
   const board = document.getElementById('board');
   const bg = board.querySelector('.slot-bg');
-  const gridSelect = document.getElementById('gridSize');
+  const gridSize = document.getElementById('gridSize');
   const shuffleBtn = document.getElementById('shuffleBtn');
   const fileInput = document.getElementById('fileInput');
   const urlInput = document.getElementById('urlInput');
@@ -104,15 +105,14 @@
   const msg = document.getElementById('msg');
   const toast = document.getElementById('toast');
 
-  let N = parseInt(gridSelect.value, 10);
-  let pieces = []; // {el,r,c,tx,ty,x,y,group,locked}
+  let N = parseInt(gridSize.value, 10);
+  let pieces = []; // {el,r,c,tx,ty,x,y,group,locked,edges}
   let groups = []; // [{id, members:Set<piece>, locked:boolean}]
   let pieceSize = 0, size = 0;
   let running=false, startTime=0, raf=null, moves=0;
   let imgURL = null;
 
   const getBoardSize = () => board.getBoundingClientRect().width;
-  const eps = 0.0001;
 
   function setCSSVars(){
     size = getBoardSize(); pieceSize = size / N;
@@ -153,10 +153,33 @@
     return map;
   }
 
+  // 凸凹の外向きを各辺で正しく扱うパス
   function puzzlePath(w,h,e){
-    const k=Math.min(w,h)*0.18, neck=k*0.7; const rTop=e.t, rRight=e.r, rBottom=e.b, rLeft=e.l;
-    function edge(x1,y1,x2,y2,dir){ const h=y1===y2; if(dir===0) return `L ${x2} ${y2}`; if(h){ const sx=(x1+x2)/2-neck, ex=(x1+x2)/2+neck, y=y1; return `L ${sx} ${y} Q ${(x1+x2)/2} ${y+dir*k} ${ex} ${y} L ${x2} ${y}`; } else { const sy=(y1+y2)/2-neck, ey=(y1+y2)/2+neck, x=x1; return `L ${x} ${sy} Q ${x+dir*k} ${(y1+y2)/2} ${x} ${ey} L ${x} ${y2}`; } }
-    let d=`M 0 0`; d+=edge(0,0,w,0,rTop); d+=edge(w,0,w,h,rRight); d+=edge(w,h,0,h,rBottom); d+=edge(0,h,0,0,rLeft); d+=' Z'; return d;
+    const k=Math.min(w,h)*0.18, neck=k*0.7;
+    const bumpAmt = (dir, side)=>{
+      if(dir===0) return 0; // フラット
+      const out = (side==='t'?-1 : side==='b'? 1 : side==='r'? 1 : -1); // 外向き法線
+      return (dir===1? out : -out) * k; // +1=凸, -1=凹
+    };
+    const edgeH = (x1,y, x2, dir, side)=>{
+      if(dir===0) return `L ${x2} ${y}`;
+      const mid=(x1+x2)/2, by=bumpAmt(dir, side);
+      const sx=mid-neck, ex=mid+neck;
+      return `L ${sx} ${y} Q ${mid} ${y+by} ${ex} ${y} L ${x2} ${y}`;
+    };
+    const edgeV = (x, y1, y2, dir, side)=>{
+      if(dir===0) return `L ${x} ${y2}`;
+      const mid=(y1+y2)/2, bx=bumpAmt(dir, side);
+      const sy=mid-neck, ey=mid+neck;
+      return `L ${x} ${sy} Q ${x+bx} ${mid} ${x} ${ey} L ${x} ${y2}`;
+    };
+    let d=`M 0 0`;
+    d+= edgeH(0,0, w, e.t, 't');      // 上
+    d+= edgeV(w,0, h, e.r, 'r');      // 右
+    d+= edgeH(w,h, 0, e.b, 'b');      // 下（逆方向）
+    d+= edgeV(0,h, 0, e.l, 'l');      // 左（逆方向）
+    d+=' Z';
+    return d;
   }
 
   // group helpers
@@ -166,6 +189,8 @@
   function mergeGroups(g1,g2){ if(g1===g2) return g1; g2.members.forEach(m=>g1.members.add(m)); groups = groups.filter(g=>g!==g2); updateGroupHud(); return g1; }
 
   function createPieces(){
+    // ★分割数は毎回セレクトから再取得（ズレ防止）
+    N = parseInt(gridSize.value, 10);
     setCSSVars(); clearAll();
     const edges = makeEdgeMap(N);
     const img = imgURL || getComputedStyle(document.documentElement).getPropertyValue('--img').trim();
@@ -187,7 +212,7 @@
       if((img||'').startsWith('url(')){ const m=img.match(/url\((.*)\)/); image.setAttributeNS('http://www.w3.org/1999/xlink','href', m? m[1].replace(/^\"|\"$/g,'') : ''); }
       else { image.setAttributeNS('http://www.w3.org/1999/xlink','href', img); }
       image.setAttribute('x', -t.tx); image.setAttribute('y', -t.ty); image.setAttribute('width', size); image.setAttribute('height', size); image.setAttribute('preserveAspectRatio','none'); image.setAttribute('clip-path',`url(#${clipId})`);
-      const stroke=document.createElementNS('http://www.w3.org/2000/svg','path'); stroke.setAttribute('d', path.getAttribute('d')); stroke.setAttribute('fill','none'); stroke.setAttribute('stroke','rgba(255,255,255,.1)'); stroke.setAttribute('stroke-width','1'); stroke.setAttribute('clip-path',`url(#${clipId})`);
+      const stroke=document.createElementNS('http://www.w3.org/2000/svg','path'); stroke.setAttribute('d', path.getAttribute('d')); stroke.setAttribute('fill','none'); stroke.setAttribute('stroke','rgba(255,255,255,.12)'); stroke.setAttribute('stroke-width','1'); stroke.setAttribute('clip-path',`url(#${clipId})`);
       svg.appendChild(defs); svg.appendChild(image); svg.appendChild(stroke); el.appendChild(svg); board.appendChild(el);
 
       const p={ el, r:t.r, c:t.c, tx:t.tx, ty:t.ty, x:parseFloat(el.style.left)||0, y:parseFloat(el.style.top)||0, group:null, locked:false, edges:e };
@@ -197,7 +222,6 @@
     // 初期は全員バラでグループ作成
     for(const p of pieces){ const g=newGroup(); g.members.add(p); }
 
-    // enable drag
     pieces.forEach(p=>enableDrag(p));
   }
 
@@ -226,15 +250,15 @@
       // 位置を確定して state に反映
       const g=getGroup(p); g.members.forEach(m=>{ m.x=parseFloat(m.el.style.left); m.y=parseFloat(m.el.style.top); });
 
-      // 1) 近くの隣ピースに“辺一致＋位置差がちょうど1マス”でスナップ＆グループ結合
+      // 1) 近くの隣ピースに“辺一致＋相対1マス”でスナップ＆グループ結合
       let merged = tryNeighborAttach(g);
       if(merged){ playSnap(); }
 
-      // 2) グループ内のいずれかがターゲット位置に十分近いなら、グループ全体をグリッドに吸着
+      // 2) グループの誰かが正解座標に近ければ、塊ごと吸着
       const snapped = tryGroupSnapToGrid(g);
       if(snapped){ playSnap(); }
 
-      // 3) 完了チェック（グループ内個別にロック判定）
+      // 3) 完了チェック
       checkSolved(g);
     };
 
@@ -254,7 +278,6 @@
   }
 
   function tryNeighborAttach(g){
-    // 任意のメンバーとその上下左右の“別グループ”が、ちょうど1マス分の相対位置で近ければ整列＆グループ結合
     const tol = Math.max(10, pieceSize*0.12);
     let changed=false;
     const members = Array.from(g.members);
@@ -283,7 +306,6 @@
   function clamp(v,min,max){ return Math.min(Math.max(v,min),max); }
 
   function tryGroupSnapToGrid(g){
-    // グループ内のどれか1枚でもターゲットに近ければ、グループ全体をオフセット調整してその1枚をターゲットに合わせる
     const snap = Math.max(12, pieceSize*0.16);
     for(const p of g.members){
       const dx = p.tx - p.x; const dy = p.ty - p.y;
@@ -296,19 +318,16 @@
   }
 
   function checkSolved(g){
-    // 個々のピースが“完全に”ターゲット位置ならロック
     let allLocked=true; let newly=0;
     for(const m of g.members){
-      const exact = Math.abs(m.x - m.tx) < 0.5 && Math.abs(m.y - m.ty) < 0.5; // グリッド吸着済みなら一致するはず
+      const exact = Math.abs(m.x - m.tx) < 0.5 && Math.abs(m.y - m.ty) < 0.5;
       if(exact && !m.locked){ m.locked=true; m.el.classList.add('locked'); newly++; }
       if(!m.locked) allLocked=false;
     }
     if(newly>0) playSnap();
     if(allLocked){
-      // グループを完全ロック
       const gg=getGroup(Array.from(g.members)[0]); if(gg){ gg.locked=true; }
       updateGroupHud();
-      // 盤面全体クリア判定
       const done = pieces.every(pp=>pp.locked);
       if(done){ stopTimer(); playFanfare(); showToast('クリア！'); msg.textContent=`おめでとう！ ${N}×${N} 完成（${timeEl.textContent} / ${moves}手）`; }
     }
@@ -316,9 +335,7 @@
 
   function shuffle(){
     stopTimer(); resetTimer(); moves=0; movesEl.textContent='0';
-    // 位置をバラし、全ピースを単独グループへ戻す
-    const old = [...pieces];
-    for(const p of old){ p.locked=false; p.el.classList.remove('locked'); p.x=(Math.random()*(size-pieceSize*0.9)+pieceSize*0.05); p.y=(Math.random()*(size-pieceSize*0.9)+pieceSize*0.05); p.el.style.left=p.x+'px'; p.el.style.top=p.y+'px'; }
+    for(const p of pieces){ p.locked=false; p.el.classList.remove('locked'); p.x=(Math.random()*(size-pieceSize*0.9)+pieceSize*0.05); p.y=(Math.random()*(size-pieceSize*0.9)+pieceSize*0.05); p.el.style.left=p.x+'px'; p.el.style.top=p.y+'px'; }
     groups=[]; for(const p of pieces){ const g=newGroup(); g.members.add(p); }
   }
 
@@ -331,7 +348,7 @@
 
   let resizeTimer; window.addEventListener('resize',()=>{ clearTimeout(resizeTimer); resizeTimer=setTimeout(()=>{ setCSSVars(); createPieces(); },120); });
 
-  gridSelect.addEventListener('change',()=>{ N=parseInt(gridSelect.value,10); createPieces(); });
+  gridSize.addEventListener('change',()=>{ createPieces(); });
   shuffleBtn.addEventListener('click', shuffle);
   fileInput.addEventListener('change',(e)=>{ if(e.target.files&&e.target.files[0]) handleFile(e.target.files[0]); });
   applyUrlBtn.addEventListener('click',()=>{ const u=urlInput.value.trim(); applyImage(u||null); });
