@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-<title>ジグソーパズル（フル機能・モバイル対応）</title>
+<title>ジグソーパズル（精密判定＆グルーピング）</title>
 <style>
   :root {
     --img: url("data:image/svg+xml;utf8,\
@@ -27,7 +27,7 @@
           <circle cx='360' cy='520' r='90' fill='%23ffffff'/>\
         </g>\
         <g font-family='sans-serif' font-size='72' fill='%23555' opacity='0.35'>\
-          <text x='48' y='130'>Jigsaw Full</text>\
+          <text x='48' y='130'>Jigsaw Precision</text>\
         </g>\
       </svg>");
   }
@@ -35,12 +35,12 @@
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans JP', sans-serif; margin: 0; background: #0f172a; color: #e5e7eb; }
   header { padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
   h1 { font-size: 15px; margin: 0; opacity: .9; }
-  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end; }
   select, button, input[type="text"] { border: 1px solid #334155; background: #111827; color: #e5e7eb; padding: 8px 10px; border-radius: 10px; }
   input[type="file"] { display:none; }
   .btn { cursor: pointer; }
-  .wrap { display: grid; place-items: center; padding: 6px 12px 22px; }
 
+  .wrap { display:grid; place-items:center; padding: 6px 12px 22px; }
   .hud { display:flex; gap:12px; align-items:center; margin-bottom:8px; font-size:14px; opacity:.9; }
   .stat { background:#0b1220; border:1px solid #1f2937; border-radius:10px; padding:6px 10px; }
 
@@ -55,20 +55,17 @@
   .msg { margin-top: 10px; font-size: 14px; opacity: .85; text-align: center; }
   .toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: rgba(17,24,39,.9); border: 1px solid #334155; color: #d1d5db; padding: 10px 14px; border-radius: 12px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .25s ease; }
   .toast.show { opacity: 1; }
-
-  .hint { position:absolute; right:8px; top:8px; background:rgba(15,23,42,.8); border:1px solid #334155; font-size:12px; padding:4px 8px; border-radius:8px; opacity:.85 }
 </style>
 </head>
 <body>
   <header>
-    <h1>ジグソーパズル（フル機能・モバイル対応）</h1>
+    <h1>ジグソーパズル（精密判定＆グルーピング）</h1>
     <div class="controls">
       <label>分割
         <select id="gridSize">
           <option value="3">3×3</option>
           <option value="4" selected>4×4</option>
           <option value="5">5×5</option>
-          <option value="6">6×6</option>
         </select>
       </label>
       <button id="shuffleBtn" class="btn">シャッフル</button>
@@ -76,7 +73,6 @@
       <input id="fileInput" type="file" accept="image/*" />
       <input id="urlInput" type="text" placeholder="画像URL（正方形推奨）" size="18" />
       <button id="applyUrlBtn" class="btn">適用</button>
-      <button id="resetBestBtn" class="btn" title="ベストをリセット">ベスト消去</button>
     </div>
   </header>
 
@@ -84,13 +80,12 @@
     <div class="hud">
       <div class="stat">タイマー：<span id="time">00:00.0</span></div>
       <div class="stat">手数：<span id="moves">0</span></div>
-      <div class="stat">ベスト：<span id="best">—</span></div>
+      <div class="stat">グループ：<span id="groups">0</span></div>
     </div>
     <div id="board" class="board">
       <div class="slot-bg" aria-hidden="true"></div>
-      <div class="hint" id="hint">ドラッグで移動／近づくとハマる</div>
     </div>
-    <div class="msg" id="msg">画像は右上で差し替えできます。</div>
+    <div class="msg" id="msg">ピース同士が“正しい凹凸”で近づくとくっついて、塊で動きます。塊が正解位置に合えば自動で吸着します。</div>
   </div>
   <div class="toast" id="toast">クリア！</div>
 
@@ -103,126 +98,54 @@
   const fileInput = document.getElementById('fileInput');
   const urlInput = document.getElementById('urlInput');
   const applyUrlBtn = document.getElementById('applyUrlBtn');
-  const resetBestBtn = document.getElementById('resetBestBtn');
-  const msg = document.getElementById('msg');
-  const toast = document.getElementById('toast');
   const timeEl = document.getElementById('time');
   const movesEl = document.getElementById('moves');
-  const bestEl = document.getElementById('best');
+  const groupsEl = document.getElementById('groups');
+  const msg = document.getElementById('msg');
+  const toast = document.getElementById('toast');
 
   let N = parseInt(gridSelect.value, 10);
-  let pieces = [];
-  let solvedCount = 0;
-  let moveCount = 0;
-  let running = false, startTime=0, timerId=null;
-  let imgURL = null; // dataURL or remote URL
+  let pieces = []; // {el,r,c,tx,ty,x,y,group,locked}
+  let groups = []; // [{id, members:Set<piece>, locked:boolean}]
+  let pieceSize = 0, size = 0;
+  let running=false, startTime=0, raf=null, moves=0;
+  let imgURL = null;
 
-  const getBoardSize = () => board.getBoundingClientRect().width; // 正方形
+  const getBoardSize = () => board.getBoundingClientRect().width;
+  const eps = 0.0001;
 
   function setCSSVars(){
-    const size = getBoardSize();
+    size = getBoardSize(); pieceSize = size / N;
     board.style.setProperty('--board', size + 'px');
-    board.style.setProperty('--piece', (size / N) + 'px');
+    board.style.setProperty('--piece', pieceSize + 'px');
   }
 
-  function showToast(text){
-    toast.textContent = text;
-    toast.classList.add('show');
-    setTimeout(()=> toast.classList.remove('show'), 1500);
-  }
+  function startTimer(){ if(running) return; running=true; startTime=performance.now(); tick(); }
+  function stopTimer(){ running=false; if(raf) cancelAnimationFrame(raf); }
+  function resetTimer(){ stopTimer(); timeEl.textContent='00:00.0'; }
+  function tick(){ if(!running) return; const t=performance.now()-startTime; timeEl.textContent=formatTime(t); raf=requestAnimationFrame(tick); }
+  function formatTime(ms){ const s=Math.floor(ms/1000), m=Math.floor(s/60), sec=s%60, d=Math.floor(ms%1000/100); return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}.${d}`; }
+
+  function showToast(text){ toast.textContent=text; toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'),1500); }
 
   function playSnap(){
-    // WebAudioで小さなコツ音
-    const ac = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ac.createOscillator();
-    const g = ac.createGain();
-    o.type = 'triangle';
-    o.frequency.setValueAtTime(660, ac.currentTime);
-    o.frequency.exponentialRampToValueAtTime(880, ac.currentTime + 0.06);
-    g.gain.setValueAtTime(0.2, ac.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.08);
-    o.connect(g).connect(ac.destination);
-    o.start();
-    o.stop(ac.currentTime + 0.09);
+    const ac = new (window.AudioContext||window.webkitAudioContext)();
+    const o = ac.createOscillator(); const g = ac.createGain(); o.type='triangle';
+    o.frequency.setValueAtTime(660, ac.currentTime); o.frequency.exponentialRampToValueAtTime(880, ac.currentTime+0.06);
+    g.gain.setValueAtTime(0.2, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+0.08);
+    o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime+0.09);
   }
-  function playFanfare(){
-    const ac = new (window.AudioContext || window.webkitAudioContext)();
-    const notes = [523, 659, 784, 1046];
-    notes.forEach((f,i)=>{
-      const o = ac.createOscillator();
-      const g = ac.createGain();
-      o.type = 'sine'; o.frequency.value = f;
-      g.gain.value = 0.0001;
-      g.gain.exponentialRampToValueAtTime(0.15, ac.currentTime + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.18);
-      o.connect(g).connect(ac.destination);
-      o.start(ac.currentTime + i*0.09);
-      o.stop(ac.currentTime + i*0.09 + 0.2);
-    });
-  }
+  function playFanfare(){ const ac=new (window.AudioContext||window.webkitAudioContext)(); [523,659,784,1046].forEach((f,i)=>{ const o=ac.createOscillator(), g=ac.createGain(); o.type='sine'; o.frequency.value=f; g.gain.value=0.0001; g.gain.exponentialRampToValueAtTime(0.15,ac.currentTime+0.01); g.gain.exponentialRampToValueAtTime(0.0001,ac.currentTime+0.18); o.connect(g).connect(ac.destination); o.start(ac.currentTime+i*0.09); o.stop(ac.currentTime+i*0.09+0.2); }); }
 
-  function startTimer(){
-    if(running) return;
-    running = true; startTime = performance.now();
-    const tick = ()=>{
-      if(!running) return;
-      const t = performance.now() - startTime;
-      timeEl.textContent = formatTime(t);
-      timerId = requestAnimationFrame(tick);
-    };
-    tick();
-  }
-  function stopTimer(){ running = false; if(timerId) cancelAnimationFrame(timerId); }
-  function resetTimer(){ stopTimer(); timeEl.textContent = '00:00.0'; }
-  function formatTime(ms){
-    const s = Math.floor(ms/1000), m = Math.floor(s/60), sec = s%60, d = Math.floor(ms%1000/100);
-    return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}.${d}`;
-  }
+  function clearAll(){ pieces.forEach(p=>p.el.remove()); pieces=[]; groups=[]; moves=0; movesEl.textContent='0'; groupsEl.textContent='0'; resetTimer(); }
 
-  function saveBest(){
-    const key = `jig-best-${N}`;
-    const cur = timeEl.textContent;
-    const prev = localStorage.getItem(key);
-    if(!prev || timeStrToMs(cur) < timeStrToMs(prev)){
-      localStorage.setItem(key, cur);
-    }
-    bestEl.textContent = localStorage.getItem(key) || '—';
-  }
-  function loadBest(){
-    const key = `jig-best-${N}`;
-    bestEl.textContent = localStorage.getItem(key) || '—';
-  }
-  function timeStrToMs(str){
-    const m = str.match(/(\d+):(\d+)\.(\d)/);
-    if(!m) return Infinity;
-    return (+m[1])*60000 + (+m[2])*1000 + (+m[3])*100; 
-  }
-
-  function clearBoard(){
-    pieces.forEach(p => p.el.remove());
-    pieces = [];
-    solvedCount = 0; moveCount = 0; movesEl.textContent = '0';
-    resetTimer();
-  }
-
-  // ジグソーの凸凹パターン生成（隣同士が反対向きになるように）
   function makeEdgeMap(N){
-    // 0=直線, 1=凸(out), -1=凹(in)
     const map = Array.from({length:N},()=>Array.from({length:N},()=>({t:0,r:0,b:0,l:0})));
     for(let r=0;r<N;r++){
       for(let c=0;c<N;c++){
-        const cell = map[r][c];
-        // 上端/左端は直線
-        if(r>0){
-          // 上は一個上の下と反対
-          const up = map[r-1][c];
-          cell.t = -up.b;
-        } else cell.t = 0;
-        if(c>0){
-          const left = map[r][c-1];
-          cell.l = -left.r;
-        } else cell.l = 0;
-        // 右と下はランダムに（端は直線）
+        const cell=map[r][c];
+        if(r>0){ cell.t = -map[r-1][c].b; } else cell.t = 0;
+        if(c>0){ cell.l = -map[r][c-1].r; } else cell.l = 0;
         cell.r = (c===N-1)?0:(Math.random()<0.5?1:-1);
         cell.b = (r===N-1)?0:(Math.random()<0.5?1:-1);
       }
@@ -230,255 +153,188 @@
     return map;
   }
 
-  // ピースSVGパスを作る
-  function puzzlePath(w, h, e){
-    const k = Math.min(w,h) * 0.18; // ノブ半径
-    const neck = k * 0.7;           // 付け根幅
-    const rTop = e.t, rRight = e.r, rBottom = e.b, rLeft = e.l;
-
-    function edge(x1,y1, x2,y2, dir){
-      // x1,y1 から x2,y2 へ。dir: 0直線, 1凸, -1凹（法線方向）
-      const isHorizontal = y1===y2;
-      if(dir===0){ return `L ${x2} ${y2}`; }
-      if(isHorizontal){
-        const sx = (x1+x2)/2 - neck, ex = (x1+x2)/2 + neck, y = y1;
-        const s = `L ${sx} ${y}`;
-        const a1 = `Q ${(x1+x2)/2} ${y + dir*k} ${ex} ${y}`; // かわいいコブ
-        return s + ' ' + a1 + ` L ${x2} ${y}`;
-      } else {
-        const sy = (y1+y2)/2 - neck, ey = (y1+y2)/2 + neck, x = x1;
-        const s = `L ${x} ${sy}`;
-        const a1 = `Q ${x + dir*k} ${(y1+y2)/2} ${x} ${ey}`;
-        return s + ' ' + a1 + ` L ${x} ${y2}`;
-      }
-    }
-
-    let d = `M 0 0`;
-    d += edge(0,0, w,0, rTop);        // 上
-    d += edge(w,0, w,h, rRight);      // 右
-    d += edge(w,h, 0,h, rBottom);     // 下（逆方向）
-    d += edge(0,h, 0,0, rLeft);       // 左（逆方向）
-    d += ' Z';
-    return d;
+  function puzzlePath(w,h,e){
+    const k=Math.min(w,h)*0.18, neck=k*0.7; const rTop=e.t, rRight=e.r, rBottom=e.b, rLeft=e.l;
+    function edge(x1,y1,x2,y2,dir){ const h=y1===y2; if(dir===0) return `L ${x2} ${y2}`; if(h){ const sx=(x1+x2)/2-neck, ex=(x1+x2)/2+neck, y=y1; return `L ${sx} ${y} Q ${(x1+x2)/2} ${y+dir*k} ${ex} ${y} L ${x2} ${y}`; } else { const sy=(y1+y2)/2-neck, ey=(y1+y2)/2+neck, x=x1; return `L ${x} ${sy} Q ${x+dir*k} ${(y1+y2)/2} ${x} ${ey} L ${x} ${y2}`; } }
+    let d=`M 0 0`; d+=edge(0,0,w,0,rTop); d+=edge(w,0,w,h,rRight); d+=edge(w,h,0,h,rBottom); d+=edge(0,h,0,0,rLeft); d+=' Z'; return d;
   }
 
-  function createPieces(){
-    setCSSVars();
-    clearBoard();
+  // group helpers
+  function newGroup(){ const id = crypto.randomUUID(); const g={id, members:new Set(), locked:false}; groups.push(g); updateGroupHud(); return g; }
+  function updateGroupHud(){ groupsEl.textContent = String(groups.filter(g=>!g.locked).length); }
+  function getGroup(p){ return groups.find(g=>g.members.has(p)); }
+  function mergeGroups(g1,g2){ if(g1===g2) return g1; g2.members.forEach(m=>g1.members.add(m)); groups = groups.filter(g=>g!==g2); updateGroupHud(); return g1; }
 
-    const size = getBoardSize();
-    const pieceSize = size / N;
+  function createPieces(){
+    setCSSVars(); clearAll();
     const edges = makeEdgeMap(N);
     const img = imgURL || getComputedStyle(document.documentElement).getPropertyValue('--img').trim();
 
-    const targets = [];
-    for(let r=0;r<N;r++) for(let c=0;c<N;c++) targets.push({x:c*pieceSize, y:r*pieceSize, r, c});
+    const targets=[]; for(let r=0;r<N;r++) for(let c=0;c<N;c++) targets.push({r,c,tx:c*pieceSize, ty:r*pieceSize});
 
-    // ピース生成
     for(const t of targets){
-      const e = edges[t.r][t.c];
-      const el = document.createElement('div');
-      el.className = 'piece';
-      el.style.setProperty('--piece', pieceSize + 'px');
-      el.style.left = (Math.random()*(size-pieceSize*0.9)+pieceSize*0.05) + 'px';
-      el.style.top  = (Math.random()*(size-pieceSize*0.9)+pieceSize*0.05) + 'px';
-      el.dataset.tx = t.x; el.dataset.ty = t.y; el.dataset.r=t.r; el.dataset.c=t.c;
+      const e=edges[t.r][t.c];
+      const el=document.createElement('div'); el.className='piece'; el.style.setProperty('--piece', pieceSize+'px');
+      // random start
+      el.style.left = (Math.random()*(size-pieceSize*0.9)+pieceSize*0.05)+'px';
+      el.style.top  = (Math.random()*(size-pieceSize*0.9)+pieceSize*0.05)+'px';
 
-      // SVG中で画像をクリップ
-      const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-      svg.setAttribute('viewBox',`0 0 ${pieceSize} ${pieceSize}`);
-      svg.setAttribute('width','100%'); svg.setAttribute('height','100%');
+      const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'); svg.setAttribute('viewBox',`0 0 ${pieceSize} ${pieceSize}`); svg.setAttribute('width','100%'); svg.setAttribute('height','100%');
+      const path=document.createElementNS('http://www.w3.org/2000/svg','path'); path.setAttribute('d',puzzlePath(pieceSize,pieceSize,e)); path.setAttribute('fill','#fff');
+      const clip=document.createElementNS('http://www.w3.org/2000/svg','clipPath'); const clipId=`clip-${t.r}-${t.c}-${Math.random().toString(36).slice(2)}`; clip.setAttribute('id',clipId); clip.appendChild(path.cloneNode(true));
+      const defs=document.createElementNS('http://www.w3.org/2000/svg','defs'); defs.appendChild(clip);
+      const image=document.createElementNS('http://www.w3.org/2000/svg','image');
+      if((img||'').startsWith('url(')){ const m=img.match(/url\((.*)\)/); image.setAttributeNS('http://www.w3.org/1999/xlink','href', m? m[1].replace(/^\"|\"$/g,'') : ''); }
+      else { image.setAttributeNS('http://www.w3.org/1999/xlink','href', img); }
+      image.setAttribute('x', -t.tx); image.setAttribute('y', -t.ty); image.setAttribute('width', size); image.setAttribute('height', size); image.setAttribute('preserveAspectRatio','none'); image.setAttribute('clip-path',`url(#${clipId})`);
+      const stroke=document.createElementNS('http://www.w3.org/2000/svg','path'); stroke.setAttribute('d', path.getAttribute('d')); stroke.setAttribute('fill','none'); stroke.setAttribute('stroke','rgba(255,255,255,.1)'); stroke.setAttribute('stroke-width','1'); stroke.setAttribute('clip-path',`url(#${clipId})`);
+      svg.appendChild(defs); svg.appendChild(image); svg.appendChild(stroke); el.appendChild(svg); board.appendChild(el);
 
-      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
-      path.setAttribute('d', puzzlePath(pieceSize,pieceSize,e));
-      path.setAttribute('fill','#fff');
-
-      const clip = document.createElementNS('http://www.w3.org/2000/svg','clipPath');
-      const clipId = `clip-${t.r}-${t.c}-${Math.random().toString(36).slice(2)}`;
-      clip.setAttribute('id', clipId);
-      const cp = path.cloneNode(true);
-      clip.appendChild(cp);
-
-      const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
-      defs.appendChild(clip);
-
-      const image = document.createElementNS('http://www.w3.org/2000/svg','image');
-      // hrefはボード全体を参照し、ピース位置分だけずらす
-      if(img.startsWith('url(')){
-        // CSSのurl(...)を抜き出し
-        const m = img.match(/url\((.*)\)/);
-        image.setAttributeNS('http://www.w3.org/1999/xlink','href', m? m[1].replace(/^\"|\"$/g,'') : '');
-      }else{
-        image.setAttributeNS('http://www.w3.org/1999/xlink','href', img);
-      }
-      image.setAttribute('x', -t.x);
-      image.setAttribute('y', -t.y);
-      image.setAttribute('width', size);
-      image.setAttribute('height', size);
-      image.setAttribute('preserveAspectRatio','none');
-      image.setAttribute('clip-path', `url(#${clipId})`);
-
-      // エッジの見やすい薄枠
-      const stroke = document.createElementNS('http://www.w3.org/2000/svg','path');
-      stroke.setAttribute('d', path.getAttribute('d'));
-      stroke.setAttribute('fill','none');
-      stroke.setAttribute('stroke','rgba(255,255,255,.1)');
-      stroke.setAttribute('stroke-width','1');
-      stroke.setAttribute('clip-path', `url(#${clipId})`);
-
-      svg.appendChild(defs);
-      svg.appendChild(image);
-      svg.appendChild(stroke);
-      el.appendChild(svg);
-
-      board.appendChild(el);
-
-      const piece = { el, locked:false };
-      pieces.push(piece);
-      enableDrag(piece);
+      const p={ el, r:t.r, c:t.c, tx:t.tx, ty:t.ty, x:parseFloat(el.style.left)||0, y:parseFloat(el.style.top)||0, group:null, locked:false, edges:e };
+      pieces.push(p);
     }
+
+    // 初期は全員バラでグループ作成
+    for(const p of pieces){ const g=newGroup(); g.members.add(p); }
+
+    // enable drag
+    pieces.forEach(p=>enableDrag(p));
   }
 
-  function enableDrag(piece){
-    const el = piece.el;
-    let startX=0, startY=0, startLeft=0, startTop=0, moved=false;
+  function enableDrag(p){
+    const el=p.el; let startX=0,startY=0,startLeft=0,startTop=0, moved=false; 
 
-    const onPointerDown = (e) => {
-      if(piece.locked) return;
-      el.setPointerCapture(e.pointerId);
-      el.classList.add('dragging');
-      const rect = el.getBoundingClientRect();
-      const brect = board.getBoundingClientRect();
-      startX = e.clientX; startY = e.clientY; moved=false;
-      startLeft = rect.left - brect.left;
-      startTop  = rect.top  - brect.top;
-      el.style.zIndex = String(performance.now());
+    const onDown=(e)=>{
+      if(p.locked) return; if(!running) startTimer(); moved=false;
+      el.setPointerCapture(e.pointerId); el.classList.add('dragging');
+      const rect=el.getBoundingClientRect(), b=board.getBoundingClientRect();
+      startX=e.clientX; startY=e.clientY; startLeft=rect.left-b.left; startTop=rect.top-b.top;
+      // bring group to front
+      const g=getGroup(p); const z=String(performance.now()); g.members.forEach(m=>m.el.style.zIndex=z);
       e.preventDefault();
-      if(!running){ startTimer(); }
     };
 
-    const onPointerMove = (e) => {
-      if(!el.classList.contains('dragging')) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      if(Math.abs(dx)+Math.abs(dy) > 2) moved=true;
-      const size = getBoardSize();
-      const pieceSize = size / N;
-      let nx = Math.min(Math.max(0, startLeft + dx), size - pieceSize);
-      let ny = Math.min(Math.max(0, startTop  + dy), size - pieceSize);
-      el.style.left = nx + 'px';
-      el.style.top  = ny + 'px';
+    const onMove=(e)=>{
+      if(!el.classList.contains('dragging')) return; const dx=e.clientX-startX, dy=e.clientY-startY; if(Math.abs(dx)+Math.abs(dy)>2) moved=true;
+      const g=getGroup(p);
+      // 移動対象はグループ全体
+      for(const m of g.members){ const nx=Math.min(Math.max(0,(m===p?startLeft:m.x)+dx), size-pieceSize); const ny=Math.min(Math.max(0,(m===p?startTop:m.y)+dy), size-pieceSize); m.el.style.left=nx+'px'; m.el.style.top=ny+'px'; }
     };
 
-    const onPointerUp = (e) => {
-      if(!el.classList.contains('dragging')) return;
-      el.classList.remove('dragging');
-      if(moved){ moveCount++; movesEl.textContent = String(moveCount); }
+    const onUp=(e)=>{
+      if(!el.classList.contains('dragging')) return; el.classList.remove('dragging'); if(moved){ moves++; movesEl.textContent=String(moves); }
+      // 位置を確定して state に反映
+      const g=getGroup(p); g.members.forEach(m=>{ m.x=parseFloat(m.el.style.left); m.y=parseFloat(m.el.style.top); });
 
-      const size = getBoardSize();
-      const pieceSize = size / N;
-      const tx = parseFloat(el.dataset.tx);
-      const ty = parseFloat(el.dataset.ty);
-      const cx = parseFloat(el.style.left);
-      const cy = parseFloat(el.style.top);
-      const snap = Math.max(12, pieceSize * 0.16);
-      const dx = Math.abs(cx - tx);
-      const dy = Math.abs(cy - ty);
-      if(dx <= snap && dy <= snap){
-        el.style.left = tx + 'px';
-        el.style.top  = ty + 'px';
-        piece.locked = true; el.classList.add('locked');
-        // ちょいポップ
-        el.animate([
-          { transform:'translateZ(0) scale(1)' },
-          { transform:'translateZ(0) scale(1.04)' },
-          { transform:'translateZ(0) scale(1)' }
-        ], { duration:160, easing:'ease-out' });
-        playSnap();
-        solvedCount++;
-        if(solvedCount === N*N){
-          stopTimer();
-          playFanfare();
-          saveBest();
-          showToast('クリア！');
-          msg.textContent = `おめでとう！ ${N}×${N} を ${timeEl.textContent} / ${moveCount} 手で完成。`;
+      // 1) 近くの隣ピースに“辺一致＋位置差がちょうど1マス”でスナップ＆グループ結合
+      let merged = tryNeighborAttach(g);
+      if(merged){ playSnap(); }
+
+      // 2) グループ内のいずれかがターゲット位置に十分近いなら、グループ全体をグリッドに吸着
+      const snapped = tryGroupSnapToGrid(g);
+      if(snapped){ playSnap(); }
+
+      // 3) 完了チェック（グループ内個別にロック判定）
+      checkSolved(g);
+    };
+
+    el.addEventListener('pointerdown', onDown);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+
+  function getAt(rc){ return pieces.find(pp=>pp.r===rc.r && pp.c===rc.c); }
+
+  function edgesMatch(a,b,dir){ // dir: 'r','l','t','b' for a side against b
+    if(dir==='r') return a.edges.r === -b.edges.l;
+    if(dir==='l') return a.edges.l === -b.edges.r;
+    if(dir==='t') return a.edges.t === -b.edges.b;
+    if(dir==='b') return a.edges.b === -b.edges.t;
+    return false;
+  }
+
+  function tryNeighborAttach(g){
+    // 任意のメンバーとその上下左右の“別グループ”が、ちょうど1マス分の相対位置で近ければ整列＆グループ結合
+    const tol = Math.max(10, pieceSize*0.12);
+    let changed=false;
+    const members = Array.from(g.members);
+    for(const p of members){
+      const candidates = [];
+      if(p.c+1<N){ const n=getAt({r:p.r,c:p.c+1}); if(n) candidates.push({n, dir:'r', dx:pieceSize, dy:0}); }
+      if(p.c-1>=0){ const n=getAt({r:p.r,c:p.c-1}); if(n) candidates.push({n, dir:'l', dx:-pieceSize, dy:0}); }
+      if(p.r+1<N){ const n=getAt({r:p.r+1,c:p.c}); if(n) candidates.push({n, dir:'b', dx:0, dy:pieceSize}); }
+      if(p.r-1>=0){ const n=getAt({r:p.r-1,c:p.c}); if(n) candidates.push({n, dir:'t', dx:0, dy:-pieceSize}); }
+      for(const {n,dir,dx,dy} of candidates){
+        const gn=getGroup(n); if(gn===g) continue; // 同グループは除外
+        if(!edgesMatch(p,n,dir)) continue; // 凸凹不一致
+        const ex = n.x - p.x; const ey = n.y - p.y; // 現在の相対位置
+        if(Math.abs(ex - dx) <= tol && Math.abs(ey - dy) <= tol){
+          // p を基準に、gn を正しい相対位置に寄せる
+          const moveX = (p.x + dx) - n.x; const moveY = (p.y + dy) - n.y;
+          gn.members.forEach(m=>{ m.x = clamp(m.x + moveX, 0, size-pieceSize); m.y = clamp(m.y + moveY, 0, size-pieceSize); m.el.style.left=m.x+'px'; m.el.style.top=m.y+'px'; });
+          // グループ結合
+          mergeGroups(g, gn); changed=true;
         }
       }
-    };
+    }
+    return changed;
+  }
 
-    el.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+  function clamp(v,min,max){ return Math.min(Math.max(v,min),max); }
+
+  function tryGroupSnapToGrid(g){
+    // グループ内のどれか1枚でもターゲットに近ければ、グループ全体をオフセット調整してその1枚をターゲットに合わせる
+    const snap = Math.max(12, pieceSize*0.16);
+    for(const p of g.members){
+      const dx = p.tx - p.x; const dy = p.ty - p.y;
+      if(Math.abs(dx) <= snap && Math.abs(dy) <= snap){
+        g.members.forEach(m=>{ m.x = clamp(m.x + dx, 0, size-pieceSize); m.y = clamp(m.y + dy, 0, size-pieceSize); m.el.style.left=m.x+'px'; m.el.style.top=m.y+'px'; });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function checkSolved(g){
+    // 個々のピースが“完全に”ターゲット位置ならロック
+    let allLocked=true; let newly=0;
+    for(const m of g.members){
+      const exact = Math.abs(m.x - m.tx) < 0.5 && Math.abs(m.y - m.ty) < 0.5; // グリッド吸着済みなら一致するはず
+      if(exact && !m.locked){ m.locked=true; m.el.classList.add('locked'); newly++; }
+      if(!m.locked) allLocked=false;
+    }
+    if(newly>0) playSnap();
+    if(allLocked){
+      // グループを完全ロック
+      const gg=getGroup(Array.from(g.members)[0]); if(gg){ gg.locked=true; }
+      updateGroupHud();
+      // 盤面全体クリア判定
+      const done = pieces.every(pp=>pp.locked);
+      if(done){ stopTimer(); playFanfare(); showToast('クリア！'); msg.textContent=`おめでとう！ ${N}×${N} 完成（${timeEl.textContent} / ${moves}手）`; }
+    }
   }
 
   function shuffle(){
-    const size = getBoardSize();
-    const pieceSize = size / N;
-    solvedCount = 0; moveCount = 0; movesEl.textContent = '0';
-    stopTimer(); resetTimer();
-    for(const p of pieces){
-      p.locked = false; p.el.classList.remove('locked');
-      p.el.style.left = (Math.random()*(size-pieceSize*0.9)+pieceSize*0.05) + 'px';
-      p.el.style.top  = (Math.random()*(size-pieceSize*0.9)+pieceSize*0.05) + 'px';
-    }
-    msg.textContent = 'シャッフルしました。もう一度そろえてみよう。';
+    stopTimer(); resetTimer(); moves=0; movesEl.textContent='0';
+    // 位置をバラし、全ピースを単独グループへ戻す
+    const old = [...pieces];
+    for(const p of old){ p.locked=false; p.el.classList.remove('locked'); p.x=(Math.random()*(size-pieceSize*0.9)+pieceSize*0.05); p.y=(Math.random()*(size-pieceSize*0.9)+pieceSize*0.05); p.el.style.left=p.x+'px'; p.el.style.top=p.y+'px'; }
+    groups=[]; for(const p of pieces){ const g=newGroup(); g.members.add(p); }
   }
 
-  function applyImage(url){
-    // 背景と各ピースのimageは同じURLを参照
-    imgURL = url;
-    if(url){
-      bg.style.backgroundImage = `url(${url})`;
-    } else {
-      // :root の --img を使用
-      bg.style.removeProperty('background-image');
-    }
-    createPieces();
-  }
+  function applyImage(url){ imgURL=url; if(url){ bg.style.backgroundImage=`url(${url})`; } else { bg.style.removeProperty('background-image'); }
+    createPieces(); }
 
-  function handleFile(file){
-    const reader = new FileReader();
-    reader.onload = (e)=> applyImage(e.target.result);
-    reader.readAsDataURL(file);
-  }
+  function handleFile(file){ const reader=new FileReader(); reader.onload=(e)=>applyImage(e.target.result); reader.readAsDataURL(file); }
 
-  // 初期化
-  function init(){
-    setCSSVars();
-    applyImage(null); // 内蔵画像
-    loadBest();
-  }
+  function init(){ setCSSVars(); applyImage(null); }
 
-  // リサイズで再構成（簡易）
-  let resizeTimer;
-  window.addEventListener('resize', () => {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      setCSSVars();
-      // 位置再計算が大変なので、基本版は再生成
-      createPieces();
-    }, 120);
-  });
+  let resizeTimer; window.addEventListener('resize',()=>{ clearTimeout(resizeTimer); resizeTimer=setTimeout(()=>{ setCSSVars(); createPieces(); },120); });
 
-  gridSelect.addEventListener('change', () => {
-    N = parseInt(gridSelect.value, 10);
-    createPieces();
-    loadBest();
-    msg.textContent = `${N}×${N} に設定しました。`;
-  });
-
+  gridSelect.addEventListener('change',()=>{ N=parseInt(gridSelect.value,10); createPieces(); });
   shuffleBtn.addEventListener('click', shuffle);
-  fileInput.addEventListener('change', (e)=>{
-    if(e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
-  });
-  applyUrlBtn.addEventListener('click', ()=>{
-    const u = urlInput.value.trim();
-    if(u){ applyImage(u); } else { applyImage(null); }
-  });
-  resetBestBtn.addEventListener('click', ()=>{
-    for(const k in localStorage){ if(k.startsWith && k.startsWith('jig-best-')) localStorage.removeItem(k); }
-    loadBest(); showToast('ベストをリセットしました');
-  });
+  fileInput.addEventListener('change',(e)=>{ if(e.target.files&&e.target.files[0]) handleFile(e.target.files[0]); });
+  applyUrlBtn.addEventListener('click',()=>{ const u=urlInput.value.trim(); applyImage(u||null); });
 
   init();
 })();
