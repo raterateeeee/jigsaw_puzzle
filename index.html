@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>スライドパズル</title>
+<title>スライドパズル（画像アップロード）</title>
 <style>
 body {
     font-family: sans-serif;
@@ -16,7 +16,7 @@ h1 {
 .controls {
     margin-bottom: 15px;
 }
-button {
+button, input[type="file"] {
     margin: 0 3px;
     padding: 5px 10px;
     font-size: 14px;
@@ -47,10 +47,9 @@ button {
     <button onclick="init(3)">3×3</button>
     <button onclick="init(4)">4×4</button>
     <button onclick="init(5)">5×5</button>
-    画像:
-    <button onclick="changeImage(0)">画像1</button>
-    <button onclick="changeImage(1)">画像2</button>
-    <button onclick="changeImage(2)">画像3</button>
+    <br><br>
+    画像アップロード:
+    <input type="file" accept="image/*" onchange="handleImageUpload(event)">
 </div>
 
 <div id="puzzle"></div>
@@ -61,15 +60,14 @@ let tileSize = 100;
 let tileGap = 2;
 let tiles = [];
 let emptyTile;
-let imgIndex = 0;
-
-const images = [
-    "https://picsum.photos/500/500?random=1",
-    "https://picsum.photos/500/500?random=2",
-    "https://picsum.photos/500/500?random=3"
-];
+let currentImage = null; // アップロード画像のURLを保持
 
 function init(n) {
+    if (!currentImage) {
+        alert("先に画像をアップロードしてください。");
+        return;
+    }
+
     N = n;
     const puzzle = document.getElementById("puzzle");
     puzzle.innerHTML = "";
@@ -118,9 +116,16 @@ function init(n) {
     });
 }
 
-function changeImage(index) {
-    imgIndex = index;
-    render();
+function handleImageUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        currentImage = e.target.result;
+        init(N); // 現在のサイズで再初期化
+    };
+    reader.readAsDataURL(file);
 }
 
 function render() {
@@ -132,7 +137,7 @@ function render() {
 
         if (t.id >= 0) {
             t.el.classList.remove("empty");
-            t.el.style.backgroundImage = `url(${images[imgIndex]})`;
+            t.el.style.backgroundImage = `url(${currentImage})`;
             t.el.style.backgroundSize = `${N*100}% ${N*100}%`;
             t.el.style.backgroundPosition = 
                 `${(t.id % N) * (-100/(N-1))}% ${Math.floor(t.id / N) * (-100/(N-1))}%`;
@@ -144,7 +149,6 @@ function render() {
 }
 
 function moveTile(tile) {
-    // 隣接判定
     const dx = Math.abs(tile.x - emptyTile.x);
     const dy = Math.abs(tile.y - emptyTile.y);
 
@@ -167,7 +171,6 @@ function swap(a, b) {
     b.x = tempX; b.y = tempY;
     render();
 }
-init(3);
 </script>
 </body>
 </html>
