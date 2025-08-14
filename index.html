@@ -1,1 +1,173 @@
-<!DOCTYPE html> <html lang="ja"> <head> <meta charset="UTF-8"> <title>スライドパズル</title> <style> body { font-family: sans-serif; text-align: center; background-color: #f5f5f5; } h1 { font-size: 28px; margin: 20px 0 10px; } .controls { margin-bottom: 15px; } button { margin: 0 3px; padding: 5px 10px; font-size: 14px; } #puzzle { position: relative; margin: 0 auto; } .tile { position: absolute; border: 1px solid #ccc; box-sizing: border-box; background-size: cover; background-position: center; transition: all 0.2s ease; } .tile.empty { background: none; border: none; } </style> </head> <body> <h1>スライドパズル</h1> <div class="controls"> サイズ: <button onclick="init(3)">3×3</button> <button onclick="init(4)">4×4</button> <button onclick="init(5)">5×5</button> 画像: <button onclick="changeImage(0)">画像1</button> <button onclick="changeImage(1)">画像2</button> <button onclick="changeImage(2)">画像3</button> </div> <div id="puzzle"></div> <script> let N = 3; let tileSize = 100; let tileGap = 2; let tiles = []; let emptyTile; let imgIndex = 0; const images = [ "https://picsum.photos/500/500?random=1", "https://picsum.photos/500/500?random=2", "https://picsum.photos/500/500?random=3" ]; function init(n) { N = n; const puzzle = document.getElementById("puzzle"); puzzle.innerHTML = ""; tiles = []; tileSize = 400 / N - tileGap; // 全体サイズ調整 // タイル生成 let id = 0; for (let y = 0; y < N; y++) { for (let x = 0; x < N; x++) { const tile = document.createElement("div"); tile.className = "tile"; tile.style.width = tileSize + "px"; tile.style.height = tileSize + "px"; puzzle.appendChild(tile); tiles.push({id: id, x: x, y: y, el: tile}); id++; } } // 右上外マス（N×Nの右上の外側） const outsideTile = document.createElement("div"); outsideTile.className = "tile"; outsideTile.style.width = tileSize + "px"; outsideTile.style.height = tileSize + "px"; puzzle.appendChild(outsideTile); tiles.push({id: id, x: N - 1, y: -1, el: outsideTile}); id++; // 空きマスをランダム配置（内部の1つ） let emptyPos = Math.floor(Math.random() * N * N); emptyTile = tiles[emptyPos]; emptyTile.id = -1; // パズル全体サイズ puzzle.style.width = N * (tileSize + tileGap) + "px"; puzzle.style.height = (N + 1) * (tileSize + tileGap) + "px"; render(); tiles.forEach(t => { t.el.onclick = () => { moveTile(t); }; }); } function changeImage(index) { imgIndex = index; render(); } function render() { tiles.forEach(t => { const px = t.x * (tileSize + tileGap); const py = (t.y >= 0 ? (t.y + 1) * (tileSize + tileGap) : 0); t.el.style.left = px + "px"; t.el.style.top = py + "px"; if (t.id >= 0) { t.el.classList.remove("empty"); t.el.style.backgroundImage = url(${images[imgIndex]}); t.el.style.backgroundSize = ${N*100}% ${N*100}%; t.el.style.backgroundPosition = ${(t.id % N) * (-100/(N-1))}% ${Math.floor(t.id / N) * (-100/(N-1))}%; } else { t.el.classList.add("empty"); t.el.style.backgroundImage = ""; } }); } function moveTile(tile) { // 隣接判定 const dx = Math.abs(tile.x - emptyTile.x); const dy = Math.abs(tile.y - emptyTile.y); // 内部マス同士 if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) { swap(tile, emptyTile); } // 外マスと右上セル else if (tile.y === -1 && emptyTile.x === N - 1 && emptyTile.y === 0) { swap(tile, emptyTile); } else if (emptyTile.y === -1 && tile.x === N - 1 && tile.y === 0) { swap(tile, emptyTile); } } function swap(a, b) { const tempX = a.x, tempY = a.y; a.x = b.x; a.y = b.y; b.x = tempX; b.y = tempY; render(); } init(3); </script> </body> </html>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>スライドパズル</title>
+<style>
+body {
+    font-family: sans-serif;
+    text-align: center;
+    background-color: #f5f5f5;
+}
+h1 {
+    font-size: 28px;
+    margin: 20px 0 10px;
+}
+.controls {
+    margin-bottom: 15px;
+}
+button {
+    margin: 0 3px;
+    padding: 5px 10px;
+    font-size: 14px;
+}
+#puzzle {
+    position: relative;
+    margin: 0 auto;
+}
+.tile {
+    position: absolute;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+    background-size: cover;
+    background-position: center;
+    transition: all 0.2s ease;
+}
+.tile.empty {
+    background: none;
+    border: none;
+}
+</style>
+</head>
+<body>
+<h1>スライドパズル</h1>
+
+<div class="controls">
+    サイズ:
+    <button onclick="init(3)">3×3</button>
+    <button onclick="init(4)">4×4</button>
+    <button onclick="init(5)">5×5</button>
+    画像:
+    <button onclick="changeImage(0)">画像1</button>
+    <button onclick="changeImage(1)">画像2</button>
+    <button onclick="changeImage(2)">画像3</button>
+</div>
+
+<div id="puzzle"></div>
+
+<script>
+let N = 3;
+let tileSize = 100;
+let tileGap = 2;
+let tiles = [];
+let emptyTile;
+let imgIndex = 0;
+
+const images = [
+    "https://picsum.photos/500/500?random=1",
+    "https://picsum.photos/500/500?random=2",
+    "https://picsum.photos/500/500?random=3"
+];
+
+function init(n) {
+    N = n;
+    const puzzle = document.getElementById("puzzle");
+    puzzle.innerHTML = "";
+    tiles = [];
+
+    tileSize = 400 / N - tileGap; // 全体サイズ調整
+
+    // タイル生成
+    let id = 0;
+    for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+            const tile = document.createElement("div");
+            tile.className = "tile";
+            tile.style.width = tileSize + "px";
+            tile.style.height = tileSize + "px";
+            puzzle.appendChild(tile);
+            tiles.push({id: id, x: x, y: y, el: tile});
+            id++;
+        }
+    }
+
+    // 右上外マス（N×Nの右上の外側）
+    const outsideTile = document.createElement("div");
+    outsideTile.className = "tile";
+    outsideTile.style.width = tileSize + "px";
+    outsideTile.style.height = tileSize + "px";
+    puzzle.appendChild(outsideTile);
+    tiles.push({id: id, x: N - 1, y: -1, el: outsideTile});
+    id++;
+
+    // 空きマスをランダム配置（内部の1つ）
+    let emptyPos = Math.floor(Math.random() * N * N);
+    emptyTile = tiles[emptyPos];
+    emptyTile.id = -1;
+
+    // パズル全体サイズ
+    puzzle.style.width = N * (tileSize + tileGap) + "px";
+    puzzle.style.height = (N + 1) * (tileSize + tileGap) + "px";
+
+    render();
+
+    tiles.forEach(t => {
+        t.el.onclick = () => {
+            moveTile(t);
+        };
+    });
+}
+
+function changeImage(index) {
+    imgIndex = index;
+    render();
+}
+
+function render() {
+    tiles.forEach(t => {
+        const px = t.x * (tileSize + tileGap);
+        const py = (t.y >= 0 ? (t.y + 1) * (tileSize + tileGap) : 0);
+        t.el.style.left = px + "px";
+        t.el.style.top = py + "px";
+
+        if (t.id >= 0) {
+            t.el.classList.remove("empty");
+            t.el.style.backgroundImage = `url(${images[imgIndex]})`;
+            t.el.style.backgroundSize = `${N*100}% ${N*100}%`;
+            t.el.style.backgroundPosition = 
+                `${(t.id % N) * (-100/(N-1))}% ${Math.floor(t.id / N) * (-100/(N-1))}%`;
+        } else {
+            t.el.classList.add("empty");
+            t.el.style.backgroundImage = "";
+        }
+    });
+}
+
+function moveTile(tile) {
+    // 隣接判定
+    const dx = Math.abs(tile.x - emptyTile.x);
+    const dy = Math.abs(tile.y - emptyTile.y);
+
+    // 内部マス同士
+    if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
+        swap(tile, emptyTile);
+    }
+    // 外マスと右上セル
+    else if (tile.y === -1 && emptyTile.x === N - 1 && emptyTile.y === 0) {
+        swap(tile, emptyTile);
+    }
+    else if (emptyTile.y === -1 && tile.x === N - 1 && tile.y === 0) {
+        swap(tile, emptyTile);
+    }
+}
+
+function swap(a, b) {
+    const tempX = a.x, tempY = a.y;
+    a.x = b.x; a.y = b.y;
+    b.x = tempX; b.y = tempY;
+    render();
+}
+init(3);
+</script>
+</body>
+</html>
